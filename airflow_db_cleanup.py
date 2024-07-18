@@ -75,14 +75,8 @@ try:
 except AttributeError:
     dag_model_last_scheduler_run = DagModel.last_parsed_time
 
-# List of all the objects that will be deleted. DagRun also deletes task_fail, task_reschedule, rendered_task_instance_fields, 
-# task_instance, task_map and xcom tables on cascade. 
-DATABASE_OBJECTS = [
-    {
-        "airflow_db_model": DagRun,
-        "age_check_column": DagRun.execution_date
-    }
-]
+
+
 
 session = settings.Session()
 
@@ -165,8 +159,8 @@ def print_and_cleanup_task(**context):
     logging.info("Finished Loading Configurations")
     logging.info("")
 
-    airflow_db_model = context["params"].get("airflow_db_model")
-    age_check_column = context["params"].get("age_check_column")
+    airflow_db_model = DagRun
+    age_check_column = DagRun.execution_date
 
     log_end_date = end_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
     log_start_date = start_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
@@ -292,11 +286,24 @@ if hasattr(dag, 'catchup'):
     dag.catchup = False
 
 # Tasks
-for db_object in DATABASE_OBJECTS:
-    cleanup_op = PythonOperator(
-        task_id='print_and_cleanup_task_' + str(db_object["airflow_db_model"].__name__),
-        python_callable=print_and_cleanup_task,
-        params=db_object,
-        provide_context=True,
-        dag=dag
-    )
+task_log_dag = PythonOperator(
+    task_id = 'log_dag',
+    python_callable = log_dag,
+    dag = dag)
+
+
+# DagRun also deletes task_fail, task_reschedule, rendered_task_instance_fields, 
+# task_instance, task_map and xcom tables on cascade. 
+print_and_cleanup_op = PythonOperator(
+    task_id='print_and_cleanup_task_' + str(DagRun.__name__),
+    python_callable=print_and_cleanup_task,
+    params= {
+        "airflow_db_model": DagRun,
+        "age_check_column": DagRun.execution_date
+    },
+    provide_context=True,
+    dag=dag
+)
+
+#Flow
+task_log_dag >> print_and_cleanup_op
