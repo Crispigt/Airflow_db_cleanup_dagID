@@ -45,8 +45,7 @@ DAG_ID = os.path.basename(__file__).split('.')[0]
 
 START_DATE = airflow.utils.dates.days_ago(1)
 
-# How often to Run. @daily - Once a day at Midnight (UTC)
-SCHEDULE_INTERVAL = None
+
 
 
 def get_default_date():
@@ -85,12 +84,20 @@ def print_and_cleanup_task(**context):
     ENABLE_DELETE = True
 
     #Schedule params
-    #Days ago to end date
-
-    SCHEDULE_DAYS_AGO = 90
-    SCHEDULED_INTERVALL_DAYS_START_END = 7
-    SCHEDULED_DAG_ID = ["Cybertron_SQS_controller"]
-    SCHEDULE_STATE_OF_DAG = "*"
+    SCHEDULES = [
+        {
+            "DAG_ID" : ["Cybertron_SQS_controller"],
+            "DAYS_AGO" : 90,
+            "INTERVALL_DAYS_START_END" : 7,
+            "STATE_OF_DAG" : "*"
+        },
+        {
+            "DAG_ID" : ["hello_world"],
+            "DAYS_AGO" : 180,
+            "INTERVALL_DAYS_START_END" : 10,
+            "STATE_OF_DAG" : "success"
+        }
+    ]
 
 
     session = settings.Session()
@@ -103,6 +110,8 @@ def print_and_cleanup_task(**context):
     logging.info("dag_run.conf/Inputed values: " + str(dag_run_conf))
 
     cur_date = pendulum.now(tz="UTC")
+
+    list_dagIDs_to_clean = []
 
     end_date = None
     start_date = None
@@ -122,153 +131,184 @@ def print_and_cleanup_task(**context):
         state_of_dag = dag_run_conf.get(
             "state_of_dag", None
         )
+
+        dag_id_config = {
+            "end_date" : end_date,
+            "start_date" : start_date,
+            "dag_id" : dag_id,
+            "state_of_dag" : state_of_dag
+        }
+
+        list_dagIDs_to_clean.append(dag_id_config)
+        
     else:
+        for dag_ids in SCHEDULES:
+
+            SCHEDULE_DAYS_AGO = dag_ids["DAYS_AGO"]
+            SCHEDULED_INTERVALL_DAYS_START_END = dag_ids["INTERVALL_DAYS_START_END"]
+
+            start_date = str(cur_date.subtract(days=(SCHEDULE_DAYS_AGO + SCHEDULED_INTERVALL_DAYS_START_END)).strftime('%Y-%m-%d'))
+            end_date = str(cur_date.subtract(days=(SCHEDULE_DAYS_AGO)).strftime('%Y-%m-%d'))
+            dag_id = dag_ids["DAG_ID"]
+            state_of_dag = dag_ids["STATE_OF_DAG"]
+
+            dag_id_config = {
+                "end_date" : end_date,
+                "start_date" : start_date,
+                "dag_id" : dag_id,
+                "state_of_dag" : state_of_dag
+            }
+
+            list_dagIDs_to_clean.append(dag_id_config)
+
         logging.info("No config found, using scheduled values.")
-        start_date = str(cur_date.subtract(days=(SCHEDULE_DAYS_AGO + SCHEDULED_INTERVALL_DAYS_START_END)).strftime('%Y-%m-%d'))
-        end_date = str(cur_date.subtract(days=(SCHEDULE_DAYS_AGO)).strftime('%Y-%m-%d'))
-        dag_id = SCHEDULED_DAG_ID
-        state_of_dag = SCHEDULE_STATE_OF_DAG
 
 
+    for dag_id_config in list_dagIDs_to_clean:
 
-    try:
-        if( end_date is None or start_date is None or state_of_dag is None or not dag_id):
-            logging.error("All parameters are not inputed")
-            raise exceptions.AirflowFailException("Terminating the DAG due to date validation error")
+        start_date = dag_id_config["start_date"]
+        end_date = dag_id_config["end_date"]
+        dag_id = dag_id_config["dag_id"]
+        state_of_dag = dag_id_config["state_of_dag"]
 
-        end_date = pendulum.parse(end_date, tz= "UTC").end_of('day')
-        start_date = pendulum.parse(start_date, tz= "UTC").start_of('day')
-
-        max_date = cur_date.end_of('day').subtract(days=MAX_DAYS_AGO)
-
-        end_date = end_date.in_tz(local_tz)
-        start_date = start_date.in_tz(local_tz)
-        max_date = max_date.in_tz(local_tz)
-
-    except Exception as e:
-        logging.error("Error in inputed values")
-        logging.error("Terminating")
-        sys.exit()
-
-
-
-    try:
-        if (end_date > max_date):
-            logging.error("End_date is not far away enough from now, end_date needs to be less than max_date" )
-            logging.error("max_date: " + str(max_date.strftime('%Y-%m-%d')))
-            logging.error("end_date: " + str(end_date.strftime('%Y-%m-%d')))
-            raise exceptions.AirflowFailException("Terminating the DAG due to date validation error")
-        if (end_date < start_date ):
-                logging.error(
-                    "Dates are inputed the wrong way, start dates needs to be less than or equal to end_date "
-                )
-                logging.error("start_date: " + str(start_date.strftime('%Y-%m-%d')))
-                logging.error("end_date:   " + str(end_date.strftime('%Y-%m-%d')))
+        try:
+            if( end_date is None or start_date is None or state_of_dag is None or not dag_id):
+                logging.error("All parameters are not inputed")
                 raise exceptions.AirflowFailException("Terminating the DAG due to date validation error")
-    except Exception as e:
-        logging.error("Terminating")
-        sys.exit()
 
-    logging.info("Finished Loading Configurations")
-    logging.info("")
+            end_date = pendulum.parse(end_date, tz= "UTC").end_of('day')
+            start_date = pendulum.parse(start_date, tz= "UTC").start_of('day')
 
-    airflow_db_model = DagRun
-    age_check_column = DagRun.execution_date
+            max_date = cur_date.end_of('day').subtract(days=MAX_DAYS_AGO)
 
-    log_end_date = end_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
-    log_start_date = start_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
-    
-    logging.info("Configurations:")
-    logging.info("start_date:               " + str(log_start_date))
-    logging.info("end_date:                 " + str(log_end_date))
-    logging.info("dag_id:                   " + str(dag_id))
-    logging.info("state_of_dag:             " + str(state_of_dag))
-    logging.info("enable_delete:            " + str(ENABLE_DELETE))
-    logging.info("session:                  " + str(session))
-    logging.info("airflow_db_model:         " + str(airflow_db_model))
-    logging.info("age_check_column:         " + str(age_check_column))
-    logging.info("")
+            end_date = end_date.in_tz(local_tz)
+            start_date = start_date.in_tz(local_tz)
+            max_date = max_date.in_tz(local_tz)
 
-    logging.info("Running Cleanup Process...")
+        except Exception as e:
+            logging.error("Error in inputed values")
+            logging.error("Terminating")
+            sys.exit()
 
-    try:
-        query = session.query(airflow_db_model).options(
-            load_only(age_check_column,'state', 'dag_id')
-        )
 
-        logging.info("INITIAL QUERY : " + str(query))
 
-        query = query.filter(
-            and_(func.timezone(local_tz.name, age_check_column) <= end_date),
-            and_(func.timezone(local_tz.name, age_check_column) >= start_date),
-        )
+        try:
+            if (end_date > max_date):
+                logging.error("End_date is not far away enough from now, end_date needs to be less than max_date" )
+                logging.error("max_date: " + str(max_date.strftime('%Y-%m-%d')))
+                logging.error("end_date: " + str(end_date.strftime('%Y-%m-%d')))
+                raise exceptions.AirflowFailException("Terminating the DAG due to date validation error")
+            if (end_date < start_date ):
+                    logging.error(
+                        "Dates are inputed the wrong way, start dates needs to be less than or equal to end_date "
+                    )
+                    logging.error("start_date: " + str(start_date.strftime('%Y-%m-%d')))
+                    logging.error("end_date:   " + str(end_date.strftime('%Y-%m-%d')))
+                    raise exceptions.AirflowFailException("Terminating the DAG due to date validation error")
+        except Exception as e:
+            logging.error("Terminating")
+            sys.exit()
 
-        if '*' not in dag_id:
-            query = query.filter(
-                and_(airflow_db_model.dag_id.in_(dag_id))
-            )
+        logging.info("Finished Loading Configurations for dag_ids:" + str(dag_id))
+        logging.info("")
+
+        airflow_db_model = DagRun
+        age_check_column = DagRun.execution_date
+
+        log_end_date = end_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
+        log_start_date = start_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
         
-        if '*' != state_of_dag:
-            query = query.filter(
-                airflow_db_model.state == state_of_dag
+        logging.info("Configurations:")
+        logging.info("start_date:               " + str(log_start_date))
+        logging.info("end_date:                 " + str(log_end_date))
+        logging.info("dag_id:                   " + str(dag_id))
+        logging.info("state_of_dag:             " + str(state_of_dag))
+        logging.info("enable_delete:            " + str(ENABLE_DELETE))
+        logging.info("session:                  " + str(session))
+        logging.info("airflow_db_model:         " + str(airflow_db_model))
+        logging.info("age_check_column:         " + str(age_check_column))
+        logging.info("")
+
+        logging.info("Running Cleanup Process...")
+
+        try:
+            query = session.query(airflow_db_model).options(
+                load_only(age_check_column,'state', 'dag_id')
             )
 
-        if PRINT_DELETES:
-            entries_to_delete = query.all() 
-            logging.info("Query: " + str(query))
-            logging.info(
-                "Process will be Deleting the following " +
-                str(airflow_db_model.__name__) + "(s):"
+            logging.info("INITIAL QUERY : " + str(query))
+
+            query = query.filter(
+                and_(func.timezone(local_tz.name, age_check_column) <= end_date),
+                and_(func.timezone(local_tz.name, age_check_column) >= start_date),
             )
-            for entry in entries_to_delete:
-                logging.info(
-                    "\tEntry: " + str(entry) + ", Date: " +
-                    str(entry.__dict__[str(age_check_column).split(".")[1]])
+
+            if '*' not in dag_id:
+                query = query.filter(
+                    and_(airflow_db_model.dag_id.in_(dag_id))
+                )
+            
+            if '*' != state_of_dag:
+                query = query.filter(
+                    airflow_db_model.state == state_of_dag
                 )
 
-            logging.info(
-                "Process will be Deleting " + str(len(entries_to_delete)) + " " +
-                str(airflow_db_model.__name__) + "(s)"
-            )
-        else:
-            logging.warn(
-                "You've opted to skip printing the db entries to be deleted. Set PRINT_DELETES to True to show entries!!!")
+            if PRINT_DELETES:
+                entries_to_delete = query.all() 
+                logging.info("Query: " + str(query))
+                logging.info(
+                    "Process will be Deleting the following " +
+                    str(airflow_db_model.__name__) + "(s):"
+                )
+                for entry in entries_to_delete:
+                    logging.info(
+                        "\tEntry: " + str(entry) + ", Date: " +
+                        str(entry.__dict__[str(age_check_column).split(".")[1]])
+                    )
 
-        count_query = query.with_entities(func.date_trunc('day', func.timezone(local_tz.name, age_check_column)).label('date'), func.count().label('count')).group_by('date')
-        counts = count_query.all()
-        if not counts:
-            logging.info("Count of entries to delete was 0 for period " + str(log_start_date) + " to " + str(log_end_date))
-        else:
-            for count in counts:
-                formated_date = count.date.strftime('%Y-%m-%d')
-                logging.info(f"Count of entries to delete on {formated_date}: {count.count}")
+                logging.info(
+                    "Process will be Deleting " + str(len(entries_to_delete)) + " " +
+                    str(airflow_db_model.__name__) + "(s)"
+                )
+            else:
+                logging.warn(
+                    "You've opted to skip printing the db entries to be deleted. Set PRINT_DELETES to True to show entries!!!")
+
+            count_query = query.with_entities(func.date_trunc('day', func.timezone(local_tz.name, age_check_column)).label('date'), func.count().label('count')).group_by('date')
+            counts = count_query.all()
+            if not counts:
+                logging.info("Count of entries to delete was 0 for period " + str(log_start_date) + " to " + str(log_end_date))
+            else:
+                for count in counts:
+                    formated_date = count.date.strftime('%Y-%m-%d')
+                    logging.info(f"Count of entries to delete on {formated_date}: {count.count}")
+            
+            if ENABLE_DELETE:
+                logging.info("Performing Delete...")
+
+                query.delete(synchronize_session=False)
+                session.commit() 
+
+                logging.info("Finished Performing Delete")
+            else:
+                logging.warn(
+                    "You've opted to skip deleting the db entries. Set ENABLE_DELETE to True to delete entries!!!")
+
+            logging.info("Finished Running Cleanup Process")
+
+        except ProgrammingError as e:
+            logging.error(e)
+            logging.error(str(airflow_db_model) +
+                        " is not present in the metadata. Skipping...")
+            
+        except Exception as e:
+            logging.error("An error occured: %s", str(e))
+            if session.is_active:
+                session.rollback()
+                logging.error("Transaction has been rolled back")
         
-        if ENABLE_DELETE:
-            logging.info("Performing Delete...")
-
-            query.delete(synchronize_session=False)
-            session.commit() 
-
-            logging.info("Finished Performing Delete")
-        else:
-            logging.warn(
-                "You've opted to skip deleting the db entries. Set ENABLE_DELETE to True to delete entries!!!")
-
-        logging.info("Finished Running Cleanup Process")
-
-    except ProgrammingError as e:
-        logging.error(e)
-        logging.error(str(airflow_db_model) +
-                      " is not present in the metadata. Skipping...")
-        
-    except Exception as e:
-        logging.error("An error occured: %s", str(e))
-        if session.is_active:
-            session.rollback()
-            logging.error("Transaction has been rolled back")
-    
-    finally:
-        session.close()
+        finally:
+            session.close()
 
 
 
@@ -289,7 +329,7 @@ default_args = {
 dag = DAG(
     DAG_ID,
     default_args=default_args,
-    schedule_interval=SCHEDULE_INTERVAL,
+    schedule_interval= '* * * * *',
     start_date=START_DATE, 
     tags=['dbcleanup', 'airflow-maintenance-dags']
 )
