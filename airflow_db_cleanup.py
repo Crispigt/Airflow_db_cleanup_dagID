@@ -1,31 +1,41 @@
 """
-A maintenance workflow that you can deploy into Airflow to periodically clean
-out the DagRun (and TaskInstance, Log, XCom, Job DB and SlaMiss) entries to avoid
-having too much data in your Airflow MetaStore based on a specified dag_id.
+Airflow Maintenance Workflow Configuration
 
-end_date and start_date decide between what dates. end_date is the date closest to you in time and start_date is the one furthest away.
+This script configures a maintenance workflow for Apache Airflow that periodically cleans out entries in the
+Airflow MetaStore, related to DagRun(so also TaskInstance, Log, XCom, Job DB and SlaMiss). This cleanup is crucial for
+managing the size of the MetaStore by removing old or unnecessary data based on the provided configurations.
 
-dag_id specifices dag we want to delete, here multiple dag_ids can be added or if all dags are wished to be deleted input "*".
+Configuration Parameters:
+- end_date (str): Specifies the most recent date (closest to the present) for considering data deletion in YYYY-MM-DD format.
+- start_date (str): Specifies the oldest date (furthest from the present) for considering data deletion in YYYY-MM-DD format.
+- dag_id (list of str or "*"): Identifies specific DAG IDs for cleanup. Use "*" to target all DAGs.
+- state_of_dag (str): Filters which DAG runs to delete based on their state ("success", "failed", or "*" for any).
 
-state_of_dag you can choose to only delete "success", "failed" or "*". So if you want to specify to only delete dag_ids that failed you add "failed"
-
-
-Here is an example: 
+Example Command:
 airflow dags trigger --conf '{
     "end_date": "2024-04-01",
     "start_date": "2024-03-31",
-    "dag_id": [
-        "hello_world"
-    ],
-    "state_of_dag" : "*"
-}}' airflow_db_cleanup
+    "dag_id": ["hello_world"],
+    "state_of_dag": "*"
+}' airflow_db_cleanup
 
-airflow dags 
---conf options:
-    end_date:<INT> 
-    start_date:<INT> 
-    dag_id:[<STRING>]
-    state_of_dag:<STRING> 
+Scheduling Cleanup Tasks:
+To automate the cleanup process, add configuration dictionaries to the SCHEDULES list in the print_and_cleanup_task function. 
+Each dictionary specifies a cleanup rule and timing.
+
+Example Schedule Configuration:
+{
+    "DAG_ID": ["dag_id", "dag_id_2"],
+    "DAYS_AGO": 180,  # Determines end_date as 180 days before the current date.
+    "INTERVAL_DAYS_START_END": 10,  # Sets start_date 10 days before the end_date.
+    "STATE_OF_DAG": "*"  # Applies to runs of any state.
+}
+
+After setting up the cleanup configuration, ensure to schedule these tasks like normal Airflow tasks in your DAG configuration. 
+This involves defining the scheduling interval and execution time in your main DAG file, ensuring that Airflow triggers the cleanup jobs as specified in the scheduling parameters.
+
+Note: `DAYS_AGO` defines the recent boundary for data consideration, while `INTERVAL_DAYS_START_END` establishes the time span for data consideration between two dates.
+
 
 """
 import logging
@@ -63,10 +73,6 @@ def get_default_date():
         default_date = (n.date() + timedelta(days=-1)).strftime('%Y-%m-%d')
     return default_date
 
-def log_dag(**kwargs):
-    import cybertron_common
-    cybertron_common.log_task(**kwargs)
-
 # Printing and setting up parameters, then delete the specified entries
 def print_and_cleanup_task(**context):
     
@@ -88,19 +94,18 @@ def print_and_cleanup_task(**context):
         {
             "DAG_ID" : ["Cybertron_SQS_controller"],
             "DAYS_AGO" : 90,
-            "INTERVALL_DAYS_START_END" : 7,
+            "INTERVAL_DAYS_START_END" : 7,
             "STATE_OF_DAG" : "*"
         },
         {
             "DAG_ID" : ["hello_world"],
             "DAYS_AGO" : 180,
-            "INTERVALL_DAYS_START_END" : 10,
+            "INTERVAL_DAYS_START_END" : 10,
             "STATE_OF_DAG" : "success"
         }
     ]
 
 
-    session = settings.Session()
 
     local_tz = pendulum.timezone("Europe/Stockholm")
 
@@ -145,9 +150,9 @@ def print_and_cleanup_task(**context):
         for dag_ids in SCHEDULES:
 
             SCHEDULE_DAYS_AGO = dag_ids["DAYS_AGO"]
-            SCHEDULED_INTERVALL_DAYS_START_END = dag_ids["INTERVALL_DAYS_START_END"]
+            SCHEDULED_INTERVAL_DAYS_START_END = dag_ids["INTERVAL_DAYS_START_END"]
 
-            start_date = str(cur_date.subtract(days=(SCHEDULE_DAYS_AGO + SCHEDULED_INTERVALL_DAYS_START_END)).strftime('%Y-%m-%d'))
+            start_date = str(cur_date.subtract(days=(SCHEDULE_DAYS_AGO + SCHEDULED_INTERVAL_DAYS_START_END)).strftime('%Y-%m-%d'))
             end_date = str(cur_date.subtract(days=(SCHEDULE_DAYS_AGO)).strftime('%Y-%m-%d'))
             dag_id = dag_ids["DAG_ID"]
             state_of_dag = dag_ids["STATE_OF_DAG"]
@@ -163,8 +168,15 @@ def print_and_cleanup_task(**context):
 
         logging.info("No config found, using scheduled values.")
 
-
+    count = 0
     for dag_id_config in list_dagIDs_to_clean:
+
+        session = settings.Session()
+
+        if len(list_dagIDs_to_clean) > 1:
+            count += 1
+            logging.info("")
+            logging.info("Running delete on scheduled item nr: " + str(count))
 
         start_date = dag_id_config["start_date"]
         end_date = dag_id_config["end_date"]
@@ -191,19 +203,21 @@ def print_and_cleanup_task(**context):
             sys.exit()
 
 
-
+        log_end_date = end_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
+        log_start_date = start_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
+        log_max_date = max_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
         try:
             if (end_date > max_date):
                 logging.error("End_date is not far away enough from now, end_date needs to be less than max_date" )
-                logging.error("max_date: " + str(max_date.strftime('%Y-%m-%d')))
-                logging.error("end_date: " + str(end_date.strftime('%Y-%m-%d')))
+                logging.error("max_date: " + str(log_max_date))
+                logging.error("end_date: " + str(log_end_date))
                 raise exceptions.AirflowFailException("Terminating the DAG due to date validation error")
-            if (end_date < start_date ):
+            if (end_date < start_date):
                     logging.error(
                         "Dates are inputed the wrong way, start dates needs to be less than or equal to end_date "
                     )
-                    logging.error("start_date: " + str(start_date.strftime('%Y-%m-%d')))
-                    logging.error("end_date:   " + str(end_date.strftime('%Y-%m-%d')))
+                    logging.error("start_date: " + str(log_start_date))
+                    logging.error("end_date:   " + str(log_end_date))
                     raise exceptions.AirflowFailException("Terminating the DAG due to date validation error")
         except Exception as e:
             logging.error("Terminating")
@@ -215,9 +229,6 @@ def print_and_cleanup_task(**context):
         airflow_db_model = DagRun
         age_check_column = DagRun.execution_date
 
-        log_end_date = end_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
-        log_start_date = start_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
-        
         logging.info("Configurations:")
         logging.info("start_date:               " + str(log_start_date))
         logging.info("end_date:                 " + str(log_end_date))
@@ -329,7 +340,7 @@ default_args = {
 dag = DAG(
     DAG_ID,
     default_args=default_args,
-    schedule_interval= '* * * * *',
+    schedule_interval= '*/10 * * * *',
     start_date=START_DATE, 
     tags=['dbcleanup', 'airflow-maintenance-dags']
 )
@@ -339,12 +350,6 @@ if hasattr(dag, 'catchup'):
     dag.catchup = False
 
 # Tasks
-task_log_dag = PythonOperator(
-    task_id = 'log_dag',
-    python_callable = log_dag,
-    dag = dag)
-
-
 # DagRun also deletes task_fail, task_reschedule, rendered_task_instance_fields, 
 # task_instance, task_map and xcom tables on cascade. 
 print_and_cleanup_op = PythonOperator(
@@ -359,4 +364,3 @@ print_and_cleanup_op = PythonOperator(
 )
 
 #Flow
-task_log_dag >> print_and_cleanup_op
