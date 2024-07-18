@@ -81,21 +81,28 @@ def print_and_cleanup_task(**context):
     # How close the closest delete can be in days
     MAX_DAYS_AGO = 90
 
-    # Prints the database entries which will be getting deleted; set to False to avoid printing large lists and slowdown process
     PRINT_DELETES = False
-
-    # Whether the job should delete the db entries or not. Included if you want to
-    # temporarily avoid deleting the db entries. Dry run.
     ENABLE_DELETE = True
+
+    #Schedule params
+    #Days ago to end date
+
+    SCHEDULE_DAYS_AGO = 90
+    SCHEDULED_INTERVALL_DAYS_START_END = 7
+    SCHEDULED_DAG_ID = ["Cybertron_SQS_controller"]
+    SCHEDULE_STATE_OF_DAG = "*"
+
 
     session = settings.Session()
 
-    local_tz = pendulum.timezone("Europe/Paris")
+    local_tz = pendulum.timezone("Europe/Stockholm")
 
 
     logging.info("Loading Configurations...")
     dag_run_conf = context.get("dag_run").conf
     logging.info("dag_run.conf/Inputed values: " + str(dag_run_conf))
+
+    cur_date = pendulum.now(tz="UTC")
 
     end_date = None
     start_date = None
@@ -115,6 +122,14 @@ def print_and_cleanup_task(**context):
         state_of_dag = dag_run_conf.get(
             "state_of_dag", None
         )
+    else:
+        logging.info("No config found, using scheduled values.")
+        start_date = str(cur_date.subtract(days=(SCHEDULE_DAYS_AGO + SCHEDULED_INTERVALL_DAYS_START_END)).strftime('%Y-%m-%d'))
+        end_date = str(cur_date.subtract(days=(SCHEDULE_DAYS_AGO)).strftime('%Y-%m-%d'))
+        dag_id = SCHEDULED_DAG_ID
+        state_of_dag = SCHEDULE_STATE_OF_DAG
+
+
 
     try:
         if( end_date is None or start_date is None or state_of_dag is None or not dag_id):
@@ -124,8 +139,7 @@ def print_and_cleanup_task(**context):
         end_date = pendulum.parse(end_date, tz= "UTC").end_of('day')
         start_date = pendulum.parse(start_date, tz= "UTC").start_of('day')
 
-        cur_date = pendulum.now(tz="UTC").end_of('day')
-        max_date = cur_date.subtract(days=MAX_DAYS_AGO)
+        max_date = cur_date.end_of('day').subtract(days=MAX_DAYS_AGO)
 
         end_date = end_date.in_tz(local_tz)
         start_date = start_date.in_tz(local_tz)
