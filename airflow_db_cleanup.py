@@ -28,63 +28,35 @@ airflow dags
     state_of_dag:<STRING> 
 
 """
-import airflow
-from airflow import settings
-from airflow.models import DAG, DagModel, DagTag, DagRun,  Variable
-from airflow.operators.python_operator import PythonOperator
-from airflow import exceptions
-from datetime import datetime, timedelta
-
 import logging
 import os
-import sys
-from sqlalchemy import func, and_
-from sqlalchemy.exc import ProgrammingError
-from sqlalchemy.orm import load_only
-import pendulum
+
+import airflow
+from airflow import DAG
+from airflow.models import  DagRun
+from airflow.operators.python_operator import PythonOperator
+
 
 # To see actual queries and debug sql alchemy
 #logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
-
-try:
-    from airflow.utils import timezone
-    now = timezone.utcnow
-except ImportError:
-    now = datetime.utcnow
 
 
 DAG_ID = os.path.basename(__file__).split('.')[0]
 
 START_DATE = airflow.utils.dates.days_ago(1)
 
-# How close the closest delete can be in days
-MAX_DAYS_AGO = 90
-
 # How often to Run. @daily - Once a day at Midnight (UTC)
 SCHEDULE_INTERVAL = None
 
-# Prints the database entries which will be getting deleted; set to False to avoid printing large lists and slowdown process
-PRINT_DELETES = False
-
-# Whether the job should delete the db entries or not. Included if you want to
-# temporarily avoid deleting the db entries. Dry run.
-ENABLE_DELETE = True
-
-try:
-    dag_model_last_scheduler_run = DagModel.last_scheduler_run
-except AttributeError:
-    dag_model_last_scheduler_run = DagModel.last_parsed_time
-
-
-
-
-session = settings.Session()
-
-local_tz = pendulum.timezone("Europe/Paris")
-
-
 
 def get_default_date():
+    from datetime import datetime, timedelta
+    try:
+        from airflow.utils import timezone
+        now = timezone.utcnow
+    except ImportError:
+        now = datetime.utcnow
+
     n = datetime.now()
     if (n.hour >= 21):
         default_date = n.date().strftime('%Y-%m-%d')
@@ -92,8 +64,35 @@ def get_default_date():
         default_date = (n.date() + timedelta(days=-1)).strftime('%Y-%m-%d')
     return default_date
 
-# Printing and setting up parameters
+def log_dag(**kwargs):
+    import cybertron_common
+    cybertron_common.log_task(**kwargs)
+
+# Printing and setting up parameters, then delete the specified entries
 def print_and_cleanup_task(**context):
+    
+    import sys
+    from airflow import settings, exceptions
+    from sqlalchemy import func, and_
+    from sqlalchemy.orm import load_only
+    from sqlalchemy.exc import ProgrammingError
+    import pendulum
+
+    # How close the closest delete can be in days
+    MAX_DAYS_AGO = 90
+
+    # Prints the database entries which will be getting deleted; set to False to avoid printing large lists and slowdown process
+    PRINT_DELETES = False
+
+    # Whether the job should delete the db entries or not. Included if you want to
+    # temporarily avoid deleting the db entries. Dry run.
+    ENABLE_DELETE = True
+
+    session = settings.Session()
+
+    local_tz = pendulum.timezone("Europe/Paris")
+
+
     logging.info("Loading Configurations...")
     dag_run_conf = context.get("dag_run").conf
     logging.info("dag_run.conf/Inputed values: " + str(dag_run_conf))
