@@ -71,10 +71,6 @@ def get_default_date():
         default_date = (n.date() + timedelta(days=-1)).strftime('%Y-%m-%d')
     return default_date
 
-def log_dag(**kwargs):
-    import cybertron_common
-    cybertron_common.log_task(**kwargs)
-
 # Printing and setting up parameters, then delete the specified entries
 def print_and_cleanup_task(**context):
     
