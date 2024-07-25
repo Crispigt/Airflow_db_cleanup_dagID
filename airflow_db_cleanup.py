@@ -41,80 +41,28 @@ from datetime import datetime, timedelta
 
 
 
-def set_schedule_default_date(**context):
+def set_parameters(**context):
     import logging
-    SCHEDULE_DAYS_AGO = 5000                            # Days from run time(now) to end_date 
-    SCHEDULED_INTERVAL_DAYS_START_END = 10000           # Days between end_date and start_date
-    SCHEDULED_DAG_ID = ["Cybertron_SQS_controller"]     # Dag_ids
-    SCHEDULE_STATE_OF_DAG = "*"                         # Schedule state
-    
-    logging.info("")
-    logging.info("Scheduled Configurations:")
-    logging.info("SCHEDULE_DAYS_AGO:                    " + str(SCHEDULE_DAYS_AGO))
-    logging.info("SCHEDULED_INTERVAL_DAYS_START_END:    " + str(SCHEDULED_INTERVAL_DAYS_START_END))
-    logging.info("SCHEDULED_DAG_ID:                     " + str(SCHEDULED_DAG_ID))
-    logging.info("SCHEDULE_STATE_OF_DAG:                " + str(SCHEDULE_STATE_OF_DAG))
-    logging.info("")
-
-    context["ti"].xcom_push(key="SCHEDULE_DAYS_AGO", value=SCHEDULE_DAYS_AGO)
-    context["ti"].xcom_push(key="SCHEDULED_INTERVAL_DAYS_START_END", value=SCHEDULED_INTERVAL_DAYS_START_END)
-    context["ti"].xcom_push(key="SCHEDULED_DAG_ID", value=SCHEDULED_DAG_ID)
-    context["ti"].xcom_push(key="SCHEDULE_STATE_OF_DAG", value=SCHEDULE_STATE_OF_DAG)
-
-
-
-def get_default_date():
-    n = datetime.now()
-    if (n.hour >= 21):
-        default_date = n.date().strftime('%Y-%m-%d')
-    else:
-        default_date = (n.date() + timedelta(days=-1)).strftime('%Y-%m-%d')
-    return default_date
-
-# Printing and setting up parameters, then delete the specified entries
-def print_and_cleanup_task(**context):
-    
     import sys
-    from airflow.models import  DagRun
-    from airflow import settings, exceptions
-    from sqlalchemy import func, and_
-    from sqlalchemy.orm import load_only
-    from sqlalchemy.exc import ProgrammingError
     import pendulum
     import logging
+    from airflow import exceptions
+    from airflow.models import  DagRun
 
-    # To see actual queries and debug sql alchemy
-    #logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 
     # How close the closest delete can be in days
     MAX_DAYS_AGO = 90
 
-    PRINT_DELETES = False
-    ENABLE_DELETE = True
-
-    #Get schedule params
-    SCHEDULE_DAYS_AGO = context["ti"].xcom_pull(
-        task_ids=set_schedule_default_date_func.task_id, key="SCHEDULE_DAYS_AGO"
-    )
-    SCHEDULED_INTERVAL_DAYS_START_END = context["ti"].xcom_pull(
-        task_ids=set_schedule_default_date_func.task_id, key="SCHEDULED_INTERVAL_DAYS_START_END"
-    )
-    SCHEDULED_DAG_ID = context["ti"].xcom_pull(
-        task_ids=set_schedule_default_date_func.task_id, key="SCHEDULED_DAG_ID"
-    )
-    SCHEDULE_STATE_OF_DAG = context["ti"].xcom_pull(
-        task_ids=set_schedule_default_date_func.task_id, key="SCHEDULE_STATE_OF_DAG"
-    )
-
-
-    session = settings.Session()
-
-    local_tz = pendulum.timezone("Europe/Stockholm")
-
+    SCHEDULE_DAYS_AGO = 5000                            # Days from run time(now) to end_date 
+    SCHEDULED_INTERVAL_DAYS_START_END = 10000           # Days between end_date and start_date
+    SCHEDULED_DAG_ID = ["Cybertron_SQS_controller"]     # Dag_ids
+    SCHEDULE_STATE_OF_DAG = "*"                         # State of dag getting deleted
+    
     logging.info("Loading Configurations...")
     dag_run_conf = context.get("dag_run").conf
     logging.info("dag_run.conf/Inputed values: " + str(dag_run_conf))
 
+    local_tz = pendulum.timezone("Europe/Stockholm")
     cur_date = pendulum.now(tz="UTC")
 
     end_date = None
@@ -146,6 +94,12 @@ def print_and_cleanup_task(**context):
         dag_id = SCHEDULED_DAG_ID
         state_of_dag = SCHEDULE_STATE_OF_DAG
         max_date_limit = True
+        logging.info("")
+        logging.info("Scheduled Configurations:")
+        logging.info("SCHEDULE_DAYS_AGO:                    " + str(SCHEDULE_DAYS_AGO))
+        logging.info("SCHEDULED_INTERVAL_DAYS_START_END:    " + str(SCHEDULED_INTERVAL_DAYS_START_END))
+        logging.info("SCHEDULED_DAG_ID:                     " + str(SCHEDULED_DAG_ID))
+        logging.info("SCHEDULE_STATE_OF_DAG:                " + str(SCHEDULE_STATE_OF_DAG))
 
     try:
         if(end_date is None or start_date is None or state_of_dag is None or not dag_id or max_date_limit is None):
@@ -163,22 +117,20 @@ def print_and_cleanup_task(**context):
         max_date = max_date.in_tz(local_tz)
 
     except Exception as e:
-        logging.error("1 " + str(e))
         logging.error("Error in inputed values")
         logging.error("Terminating")
         sys.exit()
 
     try:
-        if eval(max_date_limit) is True:
+        if max_date_limit is True:
             if (end_date > max_date):
                 logging.error("End_date is not far away enough from now, end_date needs to be less than max_date" )
                 logging.error("max_date: " + str(max_date.strftime('%Y-%m-%d')))
                 logging.error("end_date: " + str(end_date.strftime('%Y-%m-%d')))
                 raise exceptions.AirflowFailException("Terminating the DAG due to date validation error")
         else:
-            logging.warning("")
             logging.warning("max_date_limit is set to false")
-            logging.warning("")
+
 
         
         if start_date != "*":
@@ -191,12 +143,105 @@ def print_and_cleanup_task(**context):
                     raise exceptions.AirflowFailException("Terminating the DAG due to date validation error")
 
     except Exception as e:
-        logging.error("2 " + str(e))
         logging.error("Terminating")
         sys.exit()
 
+    airflow_db_model = DagRun
+    age_check_column = DagRun.execution_date
+
+    log_end_date = end_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
+    if start_date != "*":
+        log_start_date = start_date.in_tz(tz="UTC").strftime('%Y-%m-%d')
+    else:
+        log_start_date = start_date
+    logging.info("")
+    logging.info("Configurations:")
+    logging.info("start_date:               " + str(log_start_date))
+    logging.info("end_date:                 " + str(log_end_date))
+    logging.info("dag_id:                   " + str(dag_id))
+    logging.info("state_of_dag:             " + str(state_of_dag))
+    logging.info("max_date_limit:           " + str(max_date_limit))
+    logging.info("airflow_db_model:         " + str(airflow_db_model))
+    logging.info("age_check_column:         " + str(age_check_column))
+    logging.info("")
+
+
+
+    context["ti"].xcom_push(key="end_date", value=end_date.isoformat())
+    if start_date != "*":
+        context["ti"].xcom_push(key="start_date", value=start_date.isoformat())
+    else:
+        context["ti"].xcom_push(key="start_date", value=start_date)
+    context["ti"].xcom_push(key="dag_id", value=dag_id)
+    context["ti"].xcom_push(key="state_of_dag", value=state_of_dag)
+    context["ti"].xcom_push(key="max_date_limit", value=max_date_limit)
+
     logging.info("Finished Loading Configurations")
     logging.info("")
+
+
+
+
+
+def get_default_date():
+    n = datetime.now()
+    if (n.hour >= 21):
+        default_date = n.date().strftime('%Y-%m-%d')
+    else:
+        default_date = (n.date() + timedelta(days=-90)).strftime('%Y-%m-%d')
+    return default_date
+
+
+
+
+def log_dag(**kwargs):
+    import cybertron_common
+    cybertron_common.log_task(**kwargs)
+
+
+
+
+
+# Printing and setting up parameters, then delete the specified entries
+def print_and_cleanup_task(**context):
+    
+    from airflow.models import  DagRun
+    from airflow import settings
+    from sqlalchemy import func, and_
+    from sqlalchemy.orm import load_only
+    from sqlalchemy.exc import ProgrammingError
+    import pendulum
+    import logging
+
+    # To see actual queries and debug sql alchemy
+    #logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+
+    PRINT_DELETES = False
+    ENABLE_DELETE = True
+
+    #Get params
+    end_date = context["ti"].xcom_pull(
+        task_ids=set_parameters_func.task_id, key="end_date"
+    )
+    start_date = context["ti"].xcom_pull(
+        task_ids=set_parameters_func.task_id, key="start_date"
+    )
+    dag_id = context["ti"].xcom_pull(
+        task_ids=set_parameters_func.task_id, key="dag_id"
+    )
+    state_of_dag = context["ti"].xcom_pull(
+        task_ids=set_parameters_func.task_id, key="state_of_dag"
+    )
+    max_date_limit = context["ti"].xcom_pull(
+        task_ids=set_parameters_func.task_id, key="max_date_limit"
+    )
+    end_date = pendulum.parse(end_date)
+    if start_date != "*":
+        start_date = pendulum.parse(start_date)
+
+    session = settings.Session()
+
+    local_tz = pendulum.timezone("Europe/Stockholm")
 
     airflow_db_model = DagRun
     age_check_column = DagRun.execution_date
@@ -268,7 +313,7 @@ def print_and_cleanup_task(**context):
             logging.warn(
                 "You've opted to skip printing the db entries to be deleted. Set PRINT_DELETES to True to show entries!!!")
 
-        count_query = query.with_entities(func.date_trunc('day', func.timezone(local_tz.name, age_check_column)).label('date'), func.count().label('count')).group_by('date')
+        count_query = query.with_entities(func.date_trunc('day', func.timezone(local_tz.name, age_check_column)).label('date'), func.count().label('count')).group_by('date').order_by('date')
         counts = count_query.all()
         if not counts:
             logging.info("Count of entries to delete was 0 for period " + str(log_start_date) + " to " + str(log_end_date))
@@ -308,7 +353,7 @@ def print_and_cleanup_task(**context):
 
 default_args = {
     'params': {
-        "start_date" : get_default_date(),
+        "start_date" : "*",
         "end_date" : get_default_date(), 
         "dag_id":["notify_monitoring", "Cybertron_SQS_controller"],
         "state_of_dag" : "*",
@@ -331,9 +376,9 @@ task_log_dag = PythonOperator(
     python_callable = log_dag,
     dag = dag)
 
-set_schedule_default_date_func = PythonOperator(
+set_parameters_func = PythonOperator(
     task_id='print_configuration',
-    python_callable=set_schedule_default_date,
+    python_callable=set_parameters,
     provide_context=True,
     dag=dag)
 
@@ -349,5 +394,5 @@ print_and_cleanup_op = PythonOperator(
 )
 
 #Flow
-task_log_dag >> set_schedule_default_date_func
-set_schedule_default_date_func >> print_and_cleanup_op
+task_log_dag >> set_parameters_func
+set_parameters_func >> print_and_cleanup_op
