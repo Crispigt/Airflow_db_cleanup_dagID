@@ -194,11 +194,6 @@ def get_default_date():
 
 
 
-def log_dag(**kwargs):
-    import cybertron_common
-    cybertron_common.log_task(**kwargs)
-
-
 
 
 
