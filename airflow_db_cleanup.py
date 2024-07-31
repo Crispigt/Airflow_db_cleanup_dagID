@@ -53,8 +53,7 @@ def set_parameters(**context):
     # How close the closest delete can be in days
     MAX_DAYS_AGO = 90
 
-    SCHEDULE_DAYS_AGO = 5000                            # Days from run time(now) to end_date 
-    SCHEDULED_INTERVAL_DAYS_START_END = 10000           # Days between end_date and start_date
+    SCHEDULE_DAYS_AGO = 90                            # Days from run time(now) to end_date 
     SCHEDULED_DAG_ID = ["Cybertron_SQS_controller"]     # Dag_ids
     SCHEDULE_STATE_OF_DAG = "*"                         # State of dag getting deleted
     
@@ -89,7 +88,7 @@ def set_parameters(**context):
         )
     else:
         logging.info("No config found, using scheduled values.")
-        start_date = str(cur_date.subtract(days=(SCHEDULE_DAYS_AGO + SCHEDULED_INTERVAL_DAYS_START_END)).strftime('%Y-%m-%d'))
+        start_date = "*"
         end_date = str(cur_date.subtract(days=(SCHEDULE_DAYS_AGO)).strftime('%Y-%m-%d'))
         dag_id = SCHEDULED_DAG_ID
         state_of_dag = SCHEDULE_STATE_OF_DAG
@@ -97,7 +96,6 @@ def set_parameters(**context):
         logging.info("")
         logging.info("Scheduled Configurations:")
         logging.info("SCHEDULE_DAYS_AGO:                    " + str(SCHEDULE_DAYS_AGO))
-        logging.info("SCHEDULED_INTERVAL_DAYS_START_END:    " + str(SCHEDULED_INTERVAL_DAYS_START_END))
         logging.info("SCHEDULED_DAG_ID:                     " + str(SCHEDULED_DAG_ID))
         logging.info("SCHEDULE_STATE_OF_DAG:                " + str(SCHEDULE_STATE_OF_DAG))
 
@@ -190,9 +188,6 @@ def get_default_date():
     else:
         default_date = (n.date() + timedelta(days=-90)).strftime('%Y-%m-%d')
     return default_date
-
-
-
 
 
 
@@ -360,9 +355,8 @@ default_args = {
 dag = DAG(
     os.path.basename(__file__).split('.')[0],
     default_args=default_args,
-    schedule_interval= '*/10 * * * *',
-    start_date= datetime(2024, 7, 1), 
-    tags=['dbcleanup', 'airflow-maintenance-dags']
+    schedule_interval= '0 14 * * SAT',
+    start_date= datetime(2024, 7, 1)
 )
 
 # Tasks
@@ -389,5 +383,4 @@ print_and_cleanup_op = PythonOperator(
 )
 
 #Flow
-task_log_dag >> set_parameters_func
 set_parameters_func >> print_and_cleanup_op
