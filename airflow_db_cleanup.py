@@ -54,7 +54,7 @@ def set_parameters(**context):
     MAX_DAYS_AGO = 90
 
     SCHEDULE_DAYS_AGO = 90                            # Days from run time(now) to end_date 
-    SCHEDULED_DAG_ID = ["Cybertron_SQS_controller"]     # Dag_ids
+    SCHEDULED_DAG_ID = ["test_dag"]     # Dag_ids
     SCHEDULE_STATE_OF_DAG = "*"                         # State of dag getting deleted
     
     logging.info("Loading Configurations...")
@@ -345,7 +345,7 @@ default_args = {
     'params': {
         "start_date" : "*",
         "end_date" : get_default_date(), 
-        "dag_id":["notify_monitoring", "Cybertron_SQS_controller"],
+        "dag_id":["Defauld_dag", "test_dag"],
         "state_of_dag" : "*",
         "max_date_limit" : True
         }
